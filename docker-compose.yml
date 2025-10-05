@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: prison_data_analyzer
+    ports:
+      - "8084:80"
+    volumes:
+      - ./src:/var/www/html
+      - ./data:/var/www/html/data
+      - ./cache:/var/www/html/cache
+      - ./exports:/var/www/html/exports
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=America/Chicago
+      - PHP_MEMORY_LIMIT=512M
+    restart: unless-stopped
+    networks:
+      - prison_network
+
+networks:
+  prison_network:
+    driver: bridge
