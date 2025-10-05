@@ -163,6 +163,8 @@ $analyzer = new PrisonDataAnalyzer();
         button:disabled { background: #ccc; cursor: not-allowed; }
         button.secondary { background: #2196F3; }
         button.secondary:hover { background: #0b7dda; }
+        button.tertiary { background: #FF9800; }
+        button.tertiary:hover { background: #F57C00; }
         .loading { display: none; color: #2196F3; font-style: italic; }
         .error { color: #f44336; padding: 10px; background: #ffebee; border-radius: 5px; margin-top: 10px; }
         .success { color: #4CAF50; padding: 10px; background: #e8f5e9; border-radius: 5px; margin-top: 10px; }
@@ -194,6 +196,16 @@ $analyzer = new PrisonDataAnalyzer();
         .search-results-info { margin-top: 10px; color: #555; font-size: 14px; }
         .search-help { margin-top: 8px; font-size: 12px; color: #666; font-style: italic; }
         .search-highlight { background-color: #ffeb3b; padding: 2px 4px; border-radius: 2px; font-weight: 600; }
+        
+        /* Column Selector Styles */
+        .column-selector { background: #fff8e1; padding: 15px; border-radius: 5px; margin-bottom: 15px; border-left: 4px solid #FF9800; }
+        .column-selector-header { display: flex; justify-content: between; align-items: center; margin-bottom: 10px; }
+        .column-selector-header h3 { margin: 0; color: #555; font-size: 16px; }
+        .columns-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; max-height: 200px; overflow-y: auto; padding: 10px; background: #f9f9f9; border-radius: 5px; }
+        .column-checkbox { display: flex; align-items: center; gap: 8px; padding: 5px; }
+        .column-checkbox input[type="checkbox"] { margin: 0; }
+        .column-checkbox label { cursor: pointer; font-size: 14px; }
+        .column-actions { display: flex; gap: 10px; margin-top: 10px; }
         
         /* Modal Styles */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); animation: fadeIn 0.3s; }
@@ -266,6 +278,24 @@ $analyzer = new PrisonDataAnalyzer();
                     <button onclick="loadRecords()">Load Records</button>
                 </div>
                 
+                <!-- Column Selector -->
+                <div id="column-selector" class="column-selector" style="display: none;">
+                    <div class="column-selector-header">
+                        <h3>📋 Select Columns to Display</h3>
+                    </div>
+                    <div class="columns-container" id="columns-container">
+                        <!-- Column checkboxes will be inserted here -->
+                    </div>
+                    <div class="column-actions">
+                        <button class="tertiary" onclick="selectAllColumns()">Select All</button>
+                        <button class="tertiary" onclick="deselectAllColumns()">Deselect All</button>
+                        <button class="secondary" onclick="applyColumnSelection()">Apply Selection</button>
+                        <span id="selected-count" style="margin-left: auto; color: #666; font-size: 14px; align-self: center;">
+                            Selected: <span id="selected-count-number">0</span> / <span id="total-count-number">0</span>
+                        </span>
+                    </div>
+                </div>
+                
                 <!-- Search Box -->
                 <div id="search-container" class="search-container" style="display: none;">
                     <div class="search-box">
@@ -312,6 +342,9 @@ $analyzer = new PrisonDataAnalyzer();
         let totalRecords = 0;
         let currentFile = null;
         let searchTerm = '';
+        let allColumns = [];
+        let selectedColumns = [];
+        let columnCheckboxes = {};
         
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -568,9 +601,86 @@ $analyzer = new PrisonDataAnalyzer();
                 
                 filteredRecords = [...allRecords];
                 currentDataset = { total_rows: totalRecords, data: allRecords };
+                
+                // Extract all columns from the first record
+                if (allRecords.length > 0) {
+                    allColumns = Object.keys(allRecords[0]);
+                    selectedColumns = [...allColumns]; // Start with all columns selected
+                    setupColumnSelector();
+                }
+                
             } catch (error) {
                 container.innerHTML = `<p class="error">Error: ${error.message}</p>`;
             }
+        }
+        
+        function setupColumnSelector() {
+            const container = document.getElementById('columns-container');
+            const columnSelector = document.getElementById('column-selector');
+            
+            if (allColumns.length === 0) {
+                columnSelector.style.display = 'none';
+                return;
+            }
+            
+            // Create checkboxes for each column
+            container.innerHTML = allColumns.map(column => `
+                <div class="column-checkbox">
+                    <input type="checkbox" id="col-${column}" name="columns" value="${column}" checked onchange="updateSelectedCount()">
+                    <label for="col-${column}">${column}</label>
+                </div>
+            `).join('');
+            
+            // Store checkbox references
+            columnCheckboxes = {};
+            allColumns.forEach(column => {
+                columnCheckboxes[column] = document.getElementById(`col-${column}`);
+            });
+            
+            // Update counts and show selector
+            updateSelectedCount();
+            columnSelector.style.display = 'block';
+        }
+        
+        function selectAllColumns() {
+            allColumns.forEach(column => {
+                if (columnCheckboxes[column]) {
+                    columnCheckboxes[column].checked = true;
+                }
+            });
+            updateSelectedCount();
+        }
+        
+        function deselectAllColumns() {
+            allColumns.forEach(column => {
+                if (columnCheckboxes[column]) {
+                    columnCheckboxes[column].checked = false;
+                }
+            });
+            updateSelectedCount();
+        }
+        
+        function applyColumnSelection() {
+            selectedColumns = allColumns.filter(column => 
+                columnCheckboxes[column] && columnCheckboxes[column].checked
+            );
+            
+            if (selectedColumns.length === 0) {
+                alert('Please select at least one column to display');
+                return;
+            }
+            
+            currentPage = 0;
+            displayRecords();
+        }
+        
+        function updateSelectedCount() {
+            const selectedCount = allColumns.filter(column => 
+                columnCheckboxes[column] && columnCheckboxes[column].checked
+            ).length;
+            
+            document.getElementById('selected-count-number').textContent = selectedCount;
+            document.getElementById('total-count-number').textContent = allColumns.length;
         }
         
         function handleSearch(event) {
@@ -641,7 +751,8 @@ $analyzer = new PrisonDataAnalyzer();
                 return;
             }
             
-            const columns = Object.keys(recordsToDisplay[0]);
+            // Use selected columns for display, fallback to all columns if none selected
+            const columnsToDisplay = selectedColumns.length > 0 ? selectedColumns : allColumns;
             const totalPages = Math.ceil(recordsToDisplay.length / recordsPerPage);
             const start = currentPage * recordsPerPage;
             const end = Math.min(start + recordsPerPage, recordsToDisplay.length);
@@ -653,19 +764,20 @@ $analyzer = new PrisonDataAnalyzer();
                 <div style="margin-bottom: 10px;">
                     <strong>Total Records:</strong> ${allRecords.length.toLocaleString()}
                     ${searchActive ? ` | <strong style="color: #2196F3;">Filtered:</strong> ${filteredRecords.length.toLocaleString()}` : ''} | 
-                    <strong>Showing:</strong> ${start + 1} - ${end}
+                    <strong>Showing:</strong> ${start + 1} - ${end} | 
+                    <strong>Columns:</strong> ${columnsToDisplay.length} of ${allColumns.length}
                     <span style="margin-left: 15px; color: #666; font-style: italic;">Click any row to view details | Click column headers to sort</span>
                 </div>
                 <div style="overflow-x: auto;">
                     <table id="recordsTable">
                         <thead>
-                            <tr>${columns.map(col => `<th onclick="sortTable('${col}')" data-column="${col}">${col}</th>`).join('')}</tr>
+                            <tr>${columnsToDisplay.map(col => `<th onclick="sortTable('${col}')" data-column="${col}">${col}</th>`).join('')}</tr>
                         </thead>
                         <tbody>
                             ${pageData.map((row, idx) => {
                                 const actualIndex = allRecords.indexOf(row);
                                 return `<tr onclick="showRecordDetail(${actualIndex})">
-                                    ${columns.map(col => {
+                                    ${columnsToDisplay.map(col => {
                                         let cellValue = row[col] !== null && row[col] !== undefined ? String(row[col]) : '';
                                         
                                         // Highlight search term if active
