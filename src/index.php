@@ -186,6 +186,15 @@ $analyzer = new PrisonDataAnalyzer();
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
+        /* Search Styles */
+        .search-container { background: #f0f8ff; padding: 15px; border-radius: 5px; margin-bottom: 15px; border-left: 4px solid #2196F3; }
+        .search-box { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .search-box input[type="text"] { flex: 1; min-width: 300px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+        .search-box input[type="text"]:focus { outline: none; border-color: #2196F3; box-shadow: 0 0 5px rgba(33, 150, 243, 0.3); }
+        .search-results-info { margin-top: 10px; color: #555; font-size: 14px; }
+        .search-help { margin-top: 8px; font-size: 12px; color: #666; font-style: italic; }
+        .search-highlight { background-color: #ffeb3b; padding: 2px 4px; border-radius: 2px; font-weight: 600; }
+        
         /* Modal Styles */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); animation: fadeIn 0.3s; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -252,10 +261,25 @@ $analyzer = new PrisonDataAnalyzer();
         <div id="browse-tab" class="tab-content">
             <div class="section">
                 <h2>Browse Records</h2>
-                <div>
+                <div style="margin-bottom: 15px;">
                     <select id="browse-file"></select>
                     <button onclick="loadRecords()">Load Records</button>
                 </div>
+                
+                <!-- Search Box -->
+                <div id="search-container" class="search-container" style="display: none;">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="Search all columns... (use * for wildcards, e.g., *smith* or john*)" onkeyup="handleSearch(event)">
+                        <button onclick="performSearch()">🔍 Search</button>
+                        <button class="secondary" onclick="clearSearch()">Clear</button>
+                    </div>
+                    <div class="search-help">
+                        💡 <strong>Tips:</strong> Use * as wildcard (e.g., <code>*smith*</code> finds "Smith", "Smithson", "Blacksmith"). 
+                        Search is case-insensitive and searches all columns.
+                    </div>
+                    <div id="search-results-info" class="search-results-info"></div>
+                </div>
+                
                 <div id="records-container"></div>
             </div>
         </div>
@@ -284,8 +308,10 @@ $analyzer = new PrisonDataAnalyzer();
         let sortColumn = null;
         let sortDirection = 'asc';
         let allRecords = [];
+        let filteredRecords = [];
         let totalRecords = 0;
         let currentFile = null;
+        let searchTerm = '';
         
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -305,6 +331,8 @@ $analyzer = new PrisonDataAnalyzer();
                 const files = await response.json();
                 
                 const container = document.getElementById('pkl-files');
+                if (!container) return;
+                
                 if (!files || files.length === 0) {
                     container.innerHTML = '<p style="color: #666;">No pickle files found in /data directory. Please copy your .pkl files there.</p>';
                     return;
@@ -325,6 +353,10 @@ $analyzer = new PrisonDataAnalyzer();
                 `).join('');
             } catch (error) {
                 console.error('Error loading pickle files:', error);
+                const container = document.getElementById('pkl-files');
+                if (container) {
+                    container.innerHTML = '<p class="error">Error loading files. Check console for details.</p>';
+                }
             }
         }
         
@@ -335,7 +367,7 @@ $analyzer = new PrisonDataAnalyzer();
                 
                 const container = document.getElementById('parquet-files');
                 if (container) {
-                    container.innerHTML = files.length ? files.map(file => `
+                    container.innerHTML = files && files.length ? files.map(file => `
                         <div class="file-item">
                             <h3>${file.name}</h3>
                             <div class="file-meta">
@@ -346,13 +378,19 @@ $analyzer = new PrisonDataAnalyzer();
                 }
                 
                 // Populate dropdowns
-                const fileOptions = files.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
-                ['compare-file1', 'compare-file2', 'browse-file'].forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el) el.innerHTML = '<option value="">Select file...</option>' + fileOptions;
-                });
+                if (files && files.length) {
+                    const fileOptions = files.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
+                    ['compare-file1', 'compare-file2', 'browse-file'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.innerHTML = '<option value="">Select file...</option>' + fileOptions;
+                    });
+                }
             } catch (error) {
                 console.error('Error loading parquet files:', error);
+                const container = document.getElementById('parquet-files');
+                if (container) {
+                    container.innerHTML = '<p class="error">Error loading parquet files. Check console for details.</p>';
+                }
             }
         }
         
@@ -472,7 +510,10 @@ $analyzer = new PrisonDataAnalyzer();
                 currentPage = 0;
                 sortColumn = null;
                 sortDirection = 'asc';
+                searchTerm = '';
+                document.getElementById('searchInput').value = '';
                 await loadAllRecords(filename);
+                document.getElementById('search-container').style.display = 'block';
             } else {
                 currentPage = page;
             }
@@ -482,7 +523,7 @@ $analyzer = new PrisonDataAnalyzer();
         
         async function loadAllRecords(filename) {
             const container = document.getElementById('records-container');
-            container.innerHTML = '<p class="loading" style="display: block;">Loading all records for sorting... This may take a moment.</p>';
+            container.innerHTML = '<p class="loading" style="display: block;">Loading all records for sorting and searching... This may take a moment.</p>';
             
             try {
                 // First get total count
@@ -525,29 +566,93 @@ $analyzer = new PrisonDataAnalyzer();
                     container.innerHTML = `<p class="loading" style="display: block;">Loading records... ${Math.round((i + 1) / totalChunks * 100)}% complete</p>`;
                 }
                 
+                filteredRecords = [...allRecords];
                 currentDataset = { total_rows: totalRecords, data: allRecords };
             } catch (error) {
                 container.innerHTML = `<p class="error">Error: ${error.message}</p>`;
             }
         }
         
+        function handleSearch(event) {
+            if (event.key === 'Enter') {
+                performSearch();
+            }
+        }
+        
+        function performSearch() {
+            searchTerm = document.getElementById('searchInput').value.trim();
+            
+            if (!searchTerm) {
+                clearSearch();
+                return;
+            }
+            
+            // Convert search term to regex pattern
+            // Replace * with .* for wildcard matching
+            let regexPattern = searchTerm
+                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape special regex chars
+                .replace(/\\\*/g, '.*'); // Convert \* back to .* for wildcard
+            
+            try {
+                const searchRegex = new RegExp(regexPattern, 'i'); // case-insensitive
+                
+                // Search across all columns
+                filteredRecords = allRecords.filter(record => {
+                    return Object.values(record).some(value => {
+                        if (value === null || value === undefined) return false;
+                        return searchRegex.test(String(value));
+                    });
+                });
+                
+                // Reset to first page and display
+                currentPage = 0;
+                displayRecords();
+                
+                // Show search results info
+                const resultsInfo = document.getElementById('search-results-info');
+                if (filteredRecords.length === allRecords.length) {
+                    resultsInfo.innerHTML = `<strong>All records match</strong> (${allRecords.length.toLocaleString()} records)`;
+                } else if (filteredRecords.length === 0) {
+                    resultsInfo.innerHTML = `<strong style="color: #f44336;">No records found</strong> matching "${searchTerm}"`;
+                } else {
+                    resultsInfo.innerHTML = `<strong style="color: #4CAF50;">Found ${filteredRecords.length.toLocaleString()} records</strong> out of ${allRecords.length.toLocaleString()} (${Math.round(filteredRecords.length / allRecords.length * 100)}%)`;
+                }
+            } catch (error) {
+                alert('Invalid search pattern. Please check your wildcards.');
+            }
+        }
+        
+        function clearSearch() {
+            searchTerm = '';
+            document.getElementById('searchInput').value = '';
+            filteredRecords = [...allRecords];
+            currentPage = 0;
+            document.getElementById('search-results-info').innerHTML = '';
+            displayRecords();
+        }
+        
         function displayRecords() {
             const container = document.getElementById('records-container');
             
-            if (!allRecords || allRecords.length === 0) {
+            const recordsToDisplay = filteredRecords.length > 0 ? filteredRecords : allRecords;
+            
+            if (!recordsToDisplay || recordsToDisplay.length === 0) {
                 container.innerHTML = '<p>No records found</p>';
                 return;
             }
             
-            const columns = Object.keys(allRecords[0]);
-            const totalPages = Math.ceil(allRecords.length / recordsPerPage);
+            const columns = Object.keys(recordsToDisplay[0]);
+            const totalPages = Math.ceil(recordsToDisplay.length / recordsPerPage);
             const start = currentPage * recordsPerPage;
-            const end = Math.min(start + recordsPerPage, allRecords.length);
-            const pageData = allRecords.slice(start, end);
+            const end = Math.min(start + recordsPerPage, recordsToDisplay.length);
+            const pageData = recordsToDisplay.slice(start, end);
+            
+            const searchActive = searchTerm && filteredRecords.length !== allRecords.length;
             
             container.innerHTML = `
                 <div style="margin-bottom: 10px;">
-                    <strong>Total Records:</strong> ${allRecords.length.toLocaleString()} | 
+                    <strong>Total Records:</strong> ${allRecords.length.toLocaleString()}
+                    ${searchActive ? ` | <strong style="color: #2196F3;">Filtered:</strong> ${filteredRecords.length.toLocaleString()}` : ''} | 
                     <strong>Showing:</strong> ${start + 1} - ${end}
                     <span style="margin-left: 15px; color: #666; font-style: italic;">Click any row to view details | Click column headers to sort</span>
                 </div>
@@ -557,11 +662,25 @@ $analyzer = new PrisonDataAnalyzer();
                             <tr>${columns.map(col => `<th onclick="sortTable('${col}')" data-column="${col}">${col}</th>`).join('')}</tr>
                         </thead>
                         <tbody>
-                            ${pageData.map((row, idx) => `
-                                <tr onclick="showRecordDetail(${start + idx})">
-                                    ${columns.map(col => `<td>${row[col] !== null && row[col] !== undefined ? row[col] : ''}</td>`).join('')}
-                                </tr>
-                            `).join('')}
+                            ${pageData.map((row, idx) => {
+                                const actualIndex = allRecords.indexOf(row);
+                                return `<tr onclick="showRecordDetail(${actualIndex})">
+                                    ${columns.map(col => {
+                                        let cellValue = row[col] !== null && row[col] !== undefined ? String(row[col]) : '';
+                                        
+                                        // Highlight search term if active
+                                        if (searchActive && searchTerm && cellValue) {
+                                            const regexPattern = searchTerm
+                                                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                                                .replace(/\\\*/g, '.*');
+                                            const searchRegex = new RegExp(`(${regexPattern})`, 'gi');
+                                            cellValue = cellValue.replace(searchRegex, '<span class="search-highlight">$1</span>');
+                                        }
+                                        
+                                        return `<td>${cellValue}</td>`;
+                                    }).join('')}
+                                </tr>`;
+                            }).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -595,8 +714,10 @@ $analyzer = new PrisonDataAnalyzer();
                 th.classList.remove('sort-asc', 'sort-desc');
             });
             
-            // Sort ALL records in the dataset
-            allRecords.sort((a, b) => {
+            // Sort the filtered records (or all if no search active)
+            const recordsToSort = filteredRecords.length > 0 ? filteredRecords : allRecords;
+            
+            recordsToSort.sort((a, b) => {
                 let valA = a[column];
                 let valB = b[column];
                 
@@ -621,6 +742,13 @@ $analyzer = new PrisonDataAnalyzer();
                 if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
                 return 0;
             });
+            
+            // Update the filtered records array
+            if (filteredRecords.length > 0) {
+                filteredRecords = recordsToSort;
+            } else {
+                allRecords = recordsToSort;
+            }
             
             // Reset to first page after sorting
             currentPage = 0;
@@ -670,9 +798,11 @@ $analyzer = new PrisonDataAnalyzer();
             }
         });
         
-        // Initialize
-        loadPickleFiles();
-        loadParquetFiles();
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadPickleFiles();
+            loadParquetFiles();
+        });
     </script>
 </body>
 </html>
